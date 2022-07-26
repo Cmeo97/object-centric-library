@@ -1,4 +1,4 @@
-Projects forked from addtt
+Project forked from addtt
 
 # Object-centric library
 
