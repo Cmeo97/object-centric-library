@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 import torch
 from ignite.engine import Engine, Events
+from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from omegaconf import DictConfig
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
@@ -45,6 +46,7 @@ class BaseTrainer:
     checkpoint_handler: TrainCheckpointHandler = field(init=False)
     lr_schedulers: List[_LRScheduler] = field(init=False)  # optional schedulers
     training_start: float = field(init=False)
+
 
     def __post_init__(self):
         if self.resubmit_steps is not None and self.resubmit_hours is not None:
@@ -103,6 +105,7 @@ class BaseTrainer:
             )
         for optimizer in self.optimizers:
             optimizer.step()
+      
         return batch, output
 
     def _check_shapes(self, batch: dict, output: dict):
@@ -164,6 +167,7 @@ class BaseTrainer:
             event_stats=Events.ITERATION_COMPLETED(every=self.logloss_steps),
             param_groups=self.param_groups,
         )
+        ProgressBar().attach(self.trainer)
 
         # Here we only do training and validation.
         if len(self.dataloaders) < 2:
@@ -241,7 +245,12 @@ class BaseTrainer:
         def save_checkpoint(engine):
             state_dicts = extract_state_dicts(self._get_checkpoint_state())
             self.checkpoint_handler.save_checkpoint(state_dicts)
-
+        
+        @self.trainer.on(Events.EPOCH_COMPLETED(every=5))
+        def log_training_loss(engine):
+            #Epoch[{engine.state.epoch}], Iter[{engine.state.iteration}] 
+            print(f"Loss: {engine.state.output[1]['loss']:.2f} Dm: {engine.state.output[1]['Dm']:.2f}")
+       
         if self.resubmit_steps is not None:
             logging.info(f"Will stop and resubmit every {self.resubmit_steps} steps")
 
@@ -289,8 +298,10 @@ class BaseTrainer:
     def train(self):
         self.training_start = time.perf_counter()
         self.trainer.run(
-            self.training_dataloader, max_epochs=1, epoch_length=self.steps
-        )
+            self.training_dataloader, max_epochs=400) #, epoch_length=self.steps
+        #)
+
+   
 
     def _get_checkpoint_state(self) -> dict:
         state = dict(model=self.model, trainer=self.trainer)

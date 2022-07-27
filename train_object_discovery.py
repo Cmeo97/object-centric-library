@@ -35,8 +35,8 @@ def main(config):
     # Override config if debug mode
     if config.debug:
         debug_overrides = {
-            "batch_size": 2,
-            "trainer.steps": 2,
+            "batch_size": 1,
+            "trainer.steps": 1,
             "data_sizes": [1000, 8, 8],
             "trainer.logweights_steps": 1,
             "trainer.logimages_steps": 1,

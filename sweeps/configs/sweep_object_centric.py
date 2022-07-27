@@ -6,7 +6,7 @@ def get_sweep():
         sw.sweep("seed", range(10)),
         sw.sweep("model", ["monet", "slot-attention", "genesis", "space"]),
         sw.sweep("allow_resume", ["True"]),
-        sw.sweep("num_workers", ["1"]),
+        sw.sweep("num_workers", ["4"]),
     ]  # List[List[Dict]]
 
     dataset = sw.sweep(

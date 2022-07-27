@@ -14,7 +14,7 @@ num_workers: 0
 allow_resume: False
 
 trainer:
-  clip_grad_norm: null   # null or float
+  clip_grad_norm: 1   # null or float
 
   logweights_steps: 1_000
   logimages_steps: 10_000

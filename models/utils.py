@@ -132,6 +132,7 @@ def infer_model_type(model_name: str) -> str:
         "space",
         "monet-big-decoder",
         "slot-attention-big-decoder",
+        "vmnn",
     ]:
         return "object-centric"
     raise ValueError(f"Could not infer model type for model '{model_name}'")
