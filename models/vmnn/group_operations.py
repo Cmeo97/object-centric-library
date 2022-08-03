@@ -8,32 +8,6 @@ from einops import rearrange
 from perceiver.model.core import InputAdapter
 from perceiver.model.core import PerceiverEncoder, CrossAttention
 
-class GroupLinearLayer(nn.Module):
-    """
-    for num_blocks blocks, do linear transformations independently
-
-    self.w: (num_blocks, din, dout)
-
-    x: (batch_size, num_blocks, din)
-        -> permute: (num_blocks, batch_size, din)
-        -> bmm with self.w: (num_blocks, batch_size, din) (bmm) (num_blocks, din, dout)
-                            for each block in range(num_blocks):
-                                do (batch_size, din) mat_mul (din, dout)
-                                concatenate
-                            result (num_blocks, batch_size, dout)
-        -> permute: (batch_size, num_blocks, dout)
-
-    """
-    def __init__(self, din, dout, num_blocks):
-        super(GroupLinearLayer, self).__init__()
-
-        self.w = nn.Parameter(0.01 * torch.randn(num_blocks,din,dout))
-
-    def forward(self,x):
-        x = x.permute(1,0,2)
-        
-        x = torch.bmm(x,self.w)
-        return x.permute(1,0,2)
 
 
 class CommAttention(nn.Module):
@@ -50,51 +24,37 @@ class CommAttention(nn.Module):
                  hidden_size,
                  kdim,
                  num_heads,
-                 num_blocks,
-                 dropout
                  ):
         super().__init__()
         self.hidden_size = hidden_size
-        self.kdim = kdim
+        self.k_size = kdim
         self.num_heads = num_heads
-        self.num_blocks = num_blocks
 
-        self.key = GroupLinearLayer(hidden_size, kdim * num_heads, num_blocks)
-        self.query = GroupLinearLayer(
-            hidden_size, kdim * num_heads, num_blocks)
-        self.value = GroupLinearLayer(
-            hidden_size, hidden_size * num_heads, num_blocks)
-        self.output_fc = GroupLinearLayer(
-            num_heads * hidden_size, hidden_size, num_blocks)
-        self.dropout = nn.Dropout(p=dropout)
+
+        self.key = nn.Linear(self.hidden_size, self.num_heads * self.k_size, bias=False) # latent_z -> write_key
+        self.value = nn.Linear(self.hidden_size, self.num_heads * self.k_size, bias=False) # latent_z -> write_value
+        self.query = nn.Linear(self.hidden_size, self.num_heads * self.k_size, bias=False) # memory -> write_query
+
+        self.attn_out_transform_output = nn.Linear(self.num_heads * self.k_size, self.hidden_size, bias=False) # memory -> write_query
+       
+        self.LayerNorm = nn.LayerNorm(self.hidden_size)
+
 
     def forward(self, h):
         key = self.key(h)
         query = self.query(h)
         value = self.value(h)
+        
+        attn_logits = torch.matmul(key, query.transpose(1, 2)) / math.sqrt(self.k_size) # Shape: (batch_size, num_inputs, num_slots).
+        
+        probs = torch.softmax(attn_logits, dim=-1) # Shape: (batch_size, num_inputs, num_slots).
+       
 
-        key = self.transpose_for_scores(key, self.num_heads, self.kdim)
-        query = self.transpose_for_scores(query, self.num_heads, self.kdim)
-        value = self.transpose_for_scores(
-            value, self.num_heads, self.hidden_size)
-
-        scores = torch.matmul(query, key.transpose(-1, -2)
-                              ) / math.sqrt(self.kdim)
-        probs = nn.Softmax(dim=-1)(scores)
-
-
-        # inactive modules have zero-value query -> no context for them
-        #probs = self.dropout(probs)
-
-        context = torch.matmul(probs, value)
-        context = context.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context.size(
-        )[:-2] + (self.num_heads * self.hidden_size,)
-        # concatenate all heads
-        context = context.view(*new_context_layer_shape)
-        context = self.output_fc(context)  # to be add to current h
-
+        #print(torch.matmul(probs, torch.cat((v_h, v_z), dim=2)).shape)
+        context = self.LayerNorm(self.attn_out_transform_output(torch.matmul(probs, value)))
+       
         return context
+
 
 
 # Input adapater for perceiver
@@ -103,7 +63,7 @@ class agent_input_adapter(InputAdapter):
         super().__init__(num_input_channels=num_input_channels)
 
         self.pos_encoding = nn.Parameter(
-            torch.empty(max_seq_len, num_input_channels))
+            torch.empty(2*max_seq_len, num_input_channels))
         self.scale = math.sqrt(num_input_channels)
         self._init_parameters()
 
@@ -115,7 +75,8 @@ class agent_input_adapter(InputAdapter):
        
         b, l, dim = x.shape  # noqa: E741
         p_enc = rearrange(self.pos_encoding[:l], "... -> () ...")
-        return x * self.scale + p_enc
+       
+        return x + p_enc
 
 
 class PerceiverSW(nn.Module):
@@ -315,15 +276,26 @@ class AttentionalDynamicsUpdate(nn.Module):
 
 if __name__ == "__main__":
     
-    h_key_size=100
-    z_key_size=300
-    hidden_size = 100
+    key_size=120
+    num_heads = 4
+    hidden_size = 4
+    num_blocks = 6
     z_size = 100
-    Dynamics = AttentionalDynamicsUpdate(h_key_size, z_key_size, hidden_size, z_size, num_heads=4)
+    n_SK_slots= 4
+   #communication =CommAttention(
+   #                             hidden_size,
+   #                             key_size,
+   #                             num_heads,
+   #                             )
 
-    h = torch.rand((64, 16, 100))
-    z = torch.rand((64, 16, 100))
 
-    h_new = Dynamics(h,z)
+    communication= PerceiverSW(n_SK_slots, hidden_size, num_heads, num_blocks)
+    #Dynamics = AttentionalDynamicsUpdate(h_key_size, z_key_size, hidden_size, z_size, num_heads=4)
+
+    h = torch.rand((64, 6, 4))
+    z = torch.rand((64, 8, 4))
+
+    h_new = communication(h)
+    h_new = communication(z)
 
     

@@ -24,6 +24,7 @@ class ForwardPass:
             batch[key] = batch[key].to(self.device, non_blocking=True)
         if self.preprocess_fn is not None:
             batch = self.preprocess_fn(batch)
+        
         output = self.model(batch["image"])
         return batch, output
 

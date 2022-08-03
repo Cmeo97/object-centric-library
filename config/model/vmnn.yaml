@@ -15,13 +15,13 @@ trainer:
 
   optimizer_config:
     alg: Adam
-    lr: 0.0002
+    lr: 0.0007
 
 model:
   _target_: models.vmnn.model.vmnnAE
   name: vmnn
   num_slots: ${dataset.max_num_objects}
-  latent_size: 100
+  latent_size: 64
   beta: 10
   encoder_params:
     channels: [32, 32, 32, 32]
@@ -38,18 +38,15 @@ model:
     activations: [relu, relu, relu, null]
   vmnn_params:
     communication: 'SW'
-    latent_size: 100
-    comm_key_size: 100
-    comm_value_size: 100
-    num_comm_heads: 1
-    comm_dropout: 0.1
-    z_size: 100
-    D_num_heads: 1
-    n_SK_slots: 5
-    latent_layers: 1
-    hidden_size: 100
+    latent_size: 64
+    comm_key_size: 32
+    comm_value_size: 32
+    num_comm_heads: 2
+    n_SK_slots: 2
+    latent_layers: 2
+    hidden_size: 64
     num_slots: ${dataset.max_num_objects}
-  attention_iters: 4
+  attention_iters: 3
   mlp_size: 128
   eps: 1e-8
   h_broadcast: ${dataset.height}

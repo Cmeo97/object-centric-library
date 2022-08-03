@@ -1,3 +1,4 @@
+from calendar import EPOCH
 import logging
 import time
 from abc import abstractmethod
@@ -245,6 +246,12 @@ class BaseTrainer:
         def save_checkpoint(engine):
             state_dicts = extract_state_dicts(self._get_checkpoint_state())
             self.checkpoint_handler.save_checkpoint(state_dicts)
+
+        @self.trainer.on(Events.ITERATION_COMPLETED(every=1))
+        def beta_VAE_loss_update(engine):
+            from models.vmnn.model import beta_VAE_loss
+            beta_VAE_loss.epoch = engine.state.epoch #engine.state.epoch
+
         
         @self.trainer.on(Events.EPOCH_COMPLETED(every=5))
         def log_training_loss(engine):

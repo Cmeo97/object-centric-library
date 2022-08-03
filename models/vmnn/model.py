@@ -197,7 +197,7 @@ class SlotAttentionModule(nn.Module):
             )
 
             slots = slots.reshape(b, -1, self.dim)
-            slots = slots + self.mlp(self.norm_pre_ff(slots))
+            #slots = slots + self.mlp(self.norm_pre_ff(slots))
 
         return slots
 
@@ -213,18 +213,13 @@ class vmnn_cell(nn.Module):
                 n_SK_slots,
                 comm_key_size = 32,
                 comm_value_size = 100, 
-                num_comm_heads = 1, 
-                comm_dropout= 0.1, 
-                z_size = 100, 
-                D_num_heads = 1,
+                num_comm_heads = 1,  
                 latent_layers= 2,
                 hidden_size= 100, 
                 num_slots = 6
     ):
         super().__init__()
            
-        self.z_size = z_size
-        self.dynamics_update_num_heads = D_num_heads 
         self.communication = communication
         self.num_comm_heads = num_comm_heads
         self.comm_key_size = comm_key_size
@@ -238,20 +233,15 @@ class vmnn_cell(nn.Module):
 
          ## MLPs Initialization
         layers = []
-        layers.append(nn.Linear(self.latent_size, self.latent_size))
+        layers.append(nn.Linear(self.latent_size, int(2*self.hidden_size)))
         layers.append(nn.Tanh())
-        for i in range(self.latent_layers):
-            layers.append(nn.Linear(self.latent_size, self.latent_size))
-            layers.append(nn.Tanh())
-
-        layers.append(nn.Linear(self.latent_size, int(2*self.latent_size)))
-        
+       
         self.mlp =  nn.Sequential(*layers)
         
         if self.communication == 'CA':
-            self.communication_attention = CommAttention(self.latent_size, self.comm_key_size, self.num_comm_heads, self.num_slots, comm_dropout)
+            self.communication_attention = CommAttention(self.hidden_size, self.comm_key_size, self.num_comm_heads)
         else:
-            self.communication_attention = PerceiverSW(self.n_SK_slots, self.latent_size, self.num_comm_heads, self.num_slots)
+            self.communication_attention = PerceiverSW(self.n_SK_slots,self.hidden_size, self.num_comm_heads, self.num_slots)
      
 
     def forward(self, slots):
@@ -271,21 +261,23 @@ class vmnn_cell(nn.Module):
         # Communication
         context = self.communication_attention(z)
         z = z + context
+
         return z, mu, log_var
 
 class beta_VAE_loss(nn.Module):
     """nn.Module for beta_VAE_loss
 
     """
+    epoch = 0
     def __init__(self, reconstruction_loss, beta):
         super().__init__()
         self.warmup_epoch = 25
         self.C = 50.0
         self.beta = beta
         self.reconstruction_loss = reconstruction_loss
-
-    def forward(self, recon_x, x, mu, log_var, epoch=10):
-
+        
+    def forward(self, recon_x, x, mu, log_var):
+    
         if self.reconstruction_loss == "MSE":
 
             recon_loss = F.mse_loss(
@@ -303,7 +295,7 @@ class beta_VAE_loss(nn.Module):
             ).sum(dim=-1)
 
         KLD = (-0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=-1)).sum(1)
-        C_factor = min(epoch / (self.warmup_epoch + 1), 1)
+        C_factor = min(self.epoch / (self.warmup_epoch + 1), 1)
         KLD_diff = torch.abs(KLD - self.C * C_factor)
 
         return (recon_loss + self.beta * KLD_diff).mean(dim=0), recon_loss.mean(dim=0), KLD.mean(dim=0)
