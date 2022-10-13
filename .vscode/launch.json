@@ -10,8 +10,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["model=vmnn",
-                     "dataset=multidsprites",
+            "args": ["model=vmnn_video",
+                     "dataset=vmds"
                      ],
             "justMyCode": true
         }
