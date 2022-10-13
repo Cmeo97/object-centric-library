@@ -14,6 +14,7 @@ from models.base_model import BaseModel
 from models.utils import ForwardPass
 from utils.utils import dict_tensor_mean
 from utils.viz import make_recon_img
+import numpy as np
 
 _DEFAULT_METRICS = [
     "ari",
@@ -47,6 +48,29 @@ class MetricsEvaluator:
     def _eval_step(self, engine: Engine, batch: dict):
         batch, output = self._forward_pass(batch)
 
+        if output["mask"].dim() > 5:
+            # Collect loss values from model output
+            loss_values = {}
+            mse = torch.tensor(np.zeros((64)), dtype=float, device=batch["image"].device)
+            for i in range(output["mask"].shape[1]):
+                reconstruction = make_recon_img(output["slot"][:, i], output["mask"][:, i]).clamp(0.0, 1.0)
+                mse_full = (batch["image"][:, i] - reconstruction) ** 2
+                mse += mse_full.mean([1, 2, 3])
+            for loss_term in self.loss_terms:
+                loss_values[loss_term] = output[loss_term]
+
+            # Return with shape (batch_size, )
+            fake_result = torch.tensor(0, dtype=float).cpu()
+            return dict(
+                ari=fake_result,
+                mse=mse,
+                mse_unmodified_fg=fake_result,
+                mse_fg=fake_result,
+                mean_segcover=fake_result,
+                scaled_segcover=fake_result,
+                **loss_values
+            )
+        
         # One-hot to categorical masks
         true_mask = batch["mask"].cpu().argmax(dim=1)
         pred_mask = output["mask"].cpu().argmax(dim=1, keepdim=True).squeeze(2)

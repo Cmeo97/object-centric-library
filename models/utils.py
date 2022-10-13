@@ -11,7 +11,7 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
 from models.base_model import BaseModel
-
+import torch.nn.functional as F
 
 @dataclass
 class ForwardPass:
@@ -25,8 +25,33 @@ class ForwardPass:
         if self.preprocess_fn is not None:
             batch = self.preprocess_fn(batch)
         
-        output = self.model(batch["image"])
-        return batch, output
+        if batch["image"].dim() > 4:
+            output = {}
+            output["loss"] = 0
+            output["kl_latent"] = 0
+            masks = []
+            z = []
+            slots = []
+            for frame in range(batch['image'].shape[1]-1):
+                if frame == 0:
+                    output_ = self.model(batch["image"][:, frame:frame+2], True)
+                else:
+                    output_ = self.model(batch["image"][:, frame:frame+2])
+                output["loss"] = output["loss"] + output_["loss"]
+                output["kl_latent"] = output["kl_latent"] + output_["kl_latent"]
+                masks.append(output_["mask"]) # (B, slots, 1, H, W)  -> (B, frames, slots, 1, H, W)
+                slots.append(output_["slot"]) # (B, slots, 3, H, W)  ->  (B, frames,  slots, 3, H, W)
+                #reconstruction.append(output_["reconstruction"]) # (B, 3, H, W)  -> (B, frames, 3, H, W)
+                z.append(output_["representation"]) #(B, slots, latent dim) - > (B, frames,  slots, latent dim)
+            output['mask'] = torch.stack(masks, 1)
+            output['slot'] = torch.stack(slots, 1)
+            #output['reconstruction'] = torch.stack(reconstruction, 1)
+            output['representation'] = torch.stack(z, 1)
+            return batch, output
+
+        else: 
+            output = self.model(batch["image"])
+            return batch, output
 
 
 def single_forward_pass(
@@ -37,6 +62,7 @@ def single_forward_pass(
     evaluator.run(dataloader, 1, 1)
     batch, output = evaluator.state.output
     return batch, output
+
 
 
 class TrainCheckpointHandler:
@@ -119,6 +145,7 @@ def load_model(
     if isinstance(checkpoint_path, str):
         checkpoint_path = Path(checkpoint_path)
     model_path = checkpoint_path / "model.pt"
+    #print(torch.load(model_path, config.device).keys())
     model.load_state_dict(torch.load(model_path, config.device))
     return model
 
@@ -134,6 +161,7 @@ def infer_model_type(model_name: str) -> str:
         "monet-big-decoder",
         "slot-attention-big-decoder",
         "vmnn",
+        "vmnn_video",
     ]:
         return "object-centric"
     raise ValueError(f"Could not infer model type for model '{model_name}'")

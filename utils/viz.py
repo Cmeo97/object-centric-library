@@ -19,9 +19,14 @@ def make_recon_img(slot, mask):
     Returns:
         The image resulting from a weighted sum of the slots using the masks as weights.
     """
-    b, s, ch, h, w = slot.shape  # B, slots, 3, H, W
-    assert mask.shape == (b, s, 1, h, w)  # B, slots, 1, H, W
-    return (slot * mask).sum(dim=1)  # B, 3, H, W
+    if slot.dim() > 5:
+        b, f, s, ch, h, w = slot.shape  # B, frames, slots, 3, H, W
+        assert mask.shape == (b, f, s, 1, h, w)  # B, frames, slots, 1, H, W
+        return (slot * mask).sum(dim=2)  # B, frames, 3, H, W
+    else:
+        b, s, ch, h, w = slot.shape  # B, slots, 3, H, W
+        assert mask.shape == (b, s, 1, h, w)  # B, slots, 1, H, W
+        return (slot * mask).sum(dim=1)  # B, 3, H, W
 
 
 DEFAULT_COLOR_MAP = torch.LongTensor(

@@ -111,6 +111,7 @@ class BaseTrainer:
 
     def _check_shapes(self, batch: dict, output: dict):
         bs = batch["image"].shape[0]
+
         if infer_model_type(self.model.name) == "distributed":
             n_slots = 1
             repr_shape = (bs, self.model.num_slots * self.model.slot_size)
@@ -120,10 +121,19 @@ class BaseTrainer:
         c = self.dataloaders[0].dataset.input_channels
         h, w = self.model.height, self.model.width
         # These are the fields in MANDATORY_FIELDS
-        assert output["loss"].dim() == 0
-        assert output["mask"].shape == (bs, n_slots, 1, h, w)
-        assert output["slot"].shape == (bs, n_slots, c, h, w)
-        assert output["representation"].shape == repr_shape
+        if batch["image"].dim() > 4:
+            frames = batch['image'].shape[1]
+            assert output["loss"].dim() == 0
+            assert output["kl_latent"].dim() == 0
+            assert output["mask"].shape == (bs, frames-1, n_slots, 1, h, w)
+            assert output["slot"].shape == (bs, frames-1, n_slots, c, h, w)
+            assert output["representation"].shape == (bs, frames-1, self.model.num_representation_slots, self.model.slot_size)
+        else:
+            assert output["loss"].dim() == 0
+            assert output["kl_latent"].dim() == 0
+            assert output["mask"].shape == (bs, n_slots, 1, h, w)
+            assert output["slot"].shape == (bs, n_slots, c, h, w)
+            assert output["representation"].shape == repr_shape
 
     def setup(
         self,
@@ -242,21 +252,21 @@ class BaseTrainer:
             self.model.train()
             logging.info("Evaluation ended")
 
-        @self.trainer.on(Events.ITERATION_COMPLETED(every=self.checkpoint_steps))
+        @self.trainer.on(Events.EPOCH_COMPLETED(every=5))
         def save_checkpoint(engine):
             state_dicts = extract_state_dicts(self._get_checkpoint_state())
             self.checkpoint_handler.save_checkpoint(state_dicts)
 
-        @self.trainer.on(Events.ITERATION_COMPLETED(every=1))
+        @self.trainer.on(Events.EPOCH_COMPLETED(every=1))
         def beta_VAE_loss_update(engine):
-            from models.vmnn.model import beta_VAE_loss
-            beta_VAE_loss.epoch = engine.state.epoch #engine.state.epoch
+            from models.vmnn_video.model import disentangled_beta_VAE_loss
+            disentangled_beta_VAE_loss.epoch = engine.state.epoch #engine.state.epoch
 
         
         @self.trainer.on(Events.EPOCH_COMPLETED(every=5))
         def log_training_loss(engine):
             #Epoch[{engine.state.epoch}], Iter[{engine.state.iteration}] 
-            print(f"Loss: {engine.state.output[1]['loss']:.2f} Dm: {engine.state.output[1]['Dm']:.2f}")
+            logging.info(f"Loss: {engine.state.output[1]['loss']:.2f} kl_latent: {engine.state.output[1]['kl_latent']:.2f}")
        
         if self.resubmit_steps is not None:
             logging.info(f"Will stop and resubmit every {self.resubmit_steps} steps")

@@ -1,0 +1,19 @@
+# @package _global_
+
+dataset:
+  _target_: data.datasets.vmds
+  name: vmds
+  width: 64
+  height: 64
+  input_channels: 3
+  num_background_objects: 1
+  max_num_objects: 6
+  dataset_path: vmds.hdf5
+  video_dataset: true
+  downstream_features: []
+
+# Total available samples: 1_000_000
+data_sizes:
+  - 10000
+  - 1000
+  - 1000

@@ -70,25 +70,45 @@ class TBLogger:
         recon_img = make_recon_img(out["slot"][:n_img], out["mask"][:n_img])
         sqrt_nrow = int(sqrt(n_img))
         x = batch["image"][:n_img]
-        assert len(out["mask"].shape) == 5  # B, slots, 1, H, W
 
-        x_recon = _flatten_slots(torch.stack([x, recon_img], dim=1), nrow=sqrt_nrow)
-        self.add_image("input-reconstruction", x_recon.clamp(0.0, 1.0), step)
+        if len(out["mask"].shape) == 5:  # B, slots, 1, H, W
+            x_recon = _flatten_slots(torch.stack([x, recon_img], dim=1), nrow=sqrt_nrow)
+            self.add_image("input-reconstruction", x_recon.clamp(0.0, 1.0), step)
 
-        slot = _flatten_slots(out["slot"][:n_img], sqrt_nrow)
-        self.add_image("slot", slot.clamp(0.0, 1.0), step)
+            slot = _flatten_slots(out["slot"][:n_img], sqrt_nrow)
+            self.add_image("slot", slot.clamp(0.0, 1.0), step)
 
-        flat_mask = _flatten_slots(batch["mask"][:n_img], sqrt_nrow)
-        mask = make_grid(flat_mask, nrow=sqrt_nrow).float()
-        self.add_image("mask: true", mask, step)
+            flat_mask = _flatten_slots(batch["mask"][:n_img], sqrt_nrow)
+            mask = make_grid(flat_mask, nrow=sqrt_nrow).float()
+            self.add_image("mask: true", mask, step)
 
-        flat_pred_mask = _flatten_slots(out["mask"][:n_img], sqrt_nrow)
-        pred_mask = make_grid(flat_pred_mask, nrow=sqrt_nrow)
-        self.add_image("mask: pred", pred_mask, step)
+            flat_pred_mask = _flatten_slots(out["mask"][:n_img], sqrt_nrow)
+            pred_mask = make_grid(flat_pred_mask, nrow=sqrt_nrow)
+            self.add_image("mask: pred", pred_mask, step)
 
-        mask_segmap, pred_mask_segmap = _compute_segmentation_mask(batch, n_img, out)
-        self.add_images("segmentation: true", mask_segmap, step)
-        self.add_images("segmentation: pred", pred_mask_segmap, step)
+            mask_segmap, pred_mask_segmap = _compute_segmentation_mask(batch["mask"], n_img, out["mask"])
+            self.add_images("segmentation: true", mask_segmap, step)
+            self.add_images("segmentation: pred", pred_mask_segmap, step)
+
+        elif len(out["mask"].shape) == 6: 
+            for i in range(x.shape[1]):
+                x_recon = _flatten_slots(torch.stack([x[:, i], recon_img[:, i]], dim=1), nrow=sqrt_nrow)
+                self.add_image("input-reconstruction-f:"+str(i), x_recon.clamp(0.0, 1.0), step)
+
+                slot = _flatten_slots(out["slot"][:n_img, i], sqrt_nrow)
+                self.add_image("slot-f:"+str(i), slot.clamp(0.0, 1.0), step)
+
+                #flat_mask = _flatten_slots(batch["mask"][:n_img, i], sqrt_nrow)
+                #mask = make_grid(flat_mask, nrow=sqrt_nrow).float()
+                #self.add_image("mask: true f:"+str(i), mask, step)
+
+                flat_pred_mask = _flatten_slots(out["mask"][:n_img, i], sqrt_nrow)
+                pred_mask = make_grid(flat_pred_mask, nrow=sqrt_nrow)
+                self.add_image("mask: pred -f:"+str(i), pred_mask, step)
+
+                #mask_segmap, pred_mask_segmap = _compute_segmentation_mask(batch["mask"][:, i], n_img, out["mask"][:, i])
+                #self.add_images("segmentation: true -f:"+str(i), mask_segmap, step)
+                #self.add_images("segmentation: pred -f:"+str(i), pred_mask_segmap, step)
 
         # if mask.shape == pred_mask.shape:
         #     true_pred_mask = torch.cat([flat_mask, flat_pred_mask], dim=-1)
@@ -187,10 +207,10 @@ class TBLogger:
 
 def _compute_segmentation_mask(batch, num_images, output):
     # [bs, ns, 1, H, W] to [bs, 1, H, W]
-    mask_segmap = batch["mask"][:num_images].argmax(1)
+    mask_segmap = batch[:num_images].argmax(1)
 
     # [bs, ns, 1, H, W] to [bs, 1, H, W]
-    pred_mask_segmap = output["mask"][:num_images].argmax(1)
+    pred_mask_segmap = output[:num_images].argmax(1)
 
     # If shape is [bs, H, W], turn it into [bs, 1, H, W]
     if mask_segmap.shape[1] != 1:

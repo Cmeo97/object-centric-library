@@ -9,6 +9,7 @@ dataset:
   num_background_objects: 1
   max_num_objects: 6
   dataset_path: multidsprites_colored_on_grayscale-full.hdf5
+  video_dataset: false
   downstream_features:
     - x
     - y

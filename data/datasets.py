@@ -36,9 +36,10 @@ class MultiObjectDataset(Dataset):
     num_background_objects: int
     input_channels: int
     dataset_size: int
+    video_dataset: bool
     dataset_path: str  # relative to the environment variable `OBJECT_CENTRIC_LIB_DATA`
     downstream_features: List[str]
-
+    video_feature: str
     # Features to be returned when loading the dataset. If None, returns all features (e.g. including masks).
     output_features: Union[Literal["all"], List[str]]
     variant: Optional[str] = None
@@ -75,12 +76,22 @@ class MultiObjectDataset(Dataset):
             self.identifier = self.name
         self.full_dataset_path = DATA / self.dataset_path
 
-        if self.skip_loading:
-            logging.info("skip_loading is True: dummy data will be used")
-            self.dataset, self.metadata = self._load_dummy_data()
-            self.downstream_features = []
-        else:
-            self.dataset, self.metadata = self._load_data()
+        if self.video_dataset:
+            self.dataset = self._load_video_data()
+            # Compute ranges to load contiguously in RAM. Faster loading when `mask` is sparse.
+            self.preload_range = (0, self.dataset_size)
+            self.idx_range = np.arange(self.dataset_size)   # dimension training video datasets
+            self.data = self.dataset[self.video_feature][
+                self.preload_range[0] : self.preload_range[1]
+            ][self.idx_range]
+            return self.dataset
+        else: 
+            if self.skip_loading:
+                logging.info("skip_loading is True: dummy data will be used")
+                self.dataset, self.metadata = self._load_dummy_data()
+                self.downstream_features = []
+            else:
+                self.dataset, self.metadata = self._load_data()
         self.data = {}
 
         # From filter strings to mask.
@@ -92,6 +103,7 @@ class MultiObjectDataset(Dataset):
             dataset_size=self.dataset_size,
             mask=self.mask,
         )
+
 
         # Load necessary subset of data.
         if self.output_features == "all":
@@ -156,6 +168,13 @@ class MultiObjectDataset(Dataset):
         By default, the data is a dict with h5py.Dataset values, but when overriding
         this method we allow arrays too."""
         return _load_data_hdf5(data_path=self.full_dataset_path)
+    
+    def _load_video_data(self) -> Tuple[DataDict, MetadataDict]:
+        """Loads data and metadata.
+
+        By default, the data is a dict with h5py.Dataset values, but when overriding
+        this method we allow arrays too."""
+        return _load_video_data_hdf5(data_path=self.full_dataset_path)
 
     def _load_dummy_data(self) -> Tuple[Dict[str, np.ndarray], MetadataDict]:
         """Loads dummy data for testing.
@@ -229,46 +248,49 @@ class MultiObjectDataset(Dataset):
 
     def __getitem__(self, idx):
         out = {}
-        for feature_name in self.data.keys():
-            out[feature_name] = self._preprocess_feature(
-                self.data[feature_name][idx], feature_name
-            )
-
-        out = self.dataset_transform_op(out, idx)
-
-        out["is_foreground"] = out["visibility"].clone()
-        out["is_foreground"][: self.num_background_objects] = 0.0
-        out["sample_id"] = self._get_raw_idx(idx)
-
-        # Object-wise y_true, shape (max num objects, y dim).
-        if len(self.downstream_metadata) == 0:
-            # In this case the shape is (max num objects, 0).
-            out["y_true"] = torch.zeros(out["visibility"].size(0), 0)
+        if self.video_dataset:
+            out["image"] = torch.as_tensor(self.data[idx], dtype=torch.float32) / 255.0
         else:
-            out["y_true"] = torch.cat(
-                [
-                    out[ftr.name].unsqueeze(1)
-                    if len(out[ftr.name].shape) == 1
-                    else out[ftr.name]
-                    for ftr in self.downstream_metadata
-                ],
-                dim=-1,
-            )
+            for feature_name in self.data.keys():
+                out[feature_name] = self._preprocess_feature(
+                    self.data[feature_name][idx], feature_name
+                )
 
-        # Per-object variable indicating whether an object was modified by a transform.
-        if "is_modified" not in out:
-            out["is_modified"] = torch.zeros_like(out["visibility"]).squeeze()
-        else:  # TODO fix type of is_modified so this is not necessary
-            out["is_modified"] = torch.FloatTensor(out["is_modified"])
+            out = self.dataset_transform_op(out, idx)
 
-        if self.postprocess_sample is not None:
-            out = self.postprocess_sample(out, self)
+            out["is_foreground"] = out["visibility"].clone()
+            out["is_foreground"][: self.num_background_objects] = 0.0
+            out["sample_id"] = self._get_raw_idx(idx)
 
-        assert out["is_modified"].dtype == torch.float32, out["is_modified"].dtype
-        assert out["visibility"].shape == (self.max_num_objects, 1)
-        assert out["mask"].shape == (self.max_num_objects, 1, self.height, self.width)
-        assert out["mask"].sum(1).max() <= 1.0
-        assert out["mask"].min() >= 0.0
+            # Object-wise y_true, shape (max num objects, y dim).
+            if len(self.downstream_metadata) == 0:
+                # In this case the shape is (max num objects, 0).
+                out["y_true"] = torch.zeros(out["visibility"].size(0), 0)
+            else:
+                out["y_true"] = torch.cat(
+                    [
+                        out[ftr.name].unsqueeze(1)
+                        if len(out[ftr.name].shape) == 1
+                        else out[ftr.name]
+                        for ftr in self.downstream_metadata
+                    ],
+                    dim=-1,
+                )
+
+            # Per-object variable indicating whether an object was modified by a transform.
+            if "is_modified" not in out:
+                out["is_modified"] = torch.zeros_like(out["visibility"]).squeeze()
+            else:  # TODO fix type of is_modified so this is not necessary
+                out["is_modified"] = torch.FloatTensor(out["is_modified"])
+
+            if self.postprocess_sample is not None:
+                out = self.postprocess_sample(out, self)
+
+            assert out["is_modified"].dtype == torch.float32, out["is_modified"].dtype
+            assert out["visibility"].shape == (self.max_num_objects, 1)
+            assert out["mask"].shape == (self.max_num_objects, 1, self.height, self.width)
+            assert out["mask"].sum(1).max() <= 1.0
+            assert out["mask"].min() >= 0.0
 
         return out
 
@@ -502,9 +524,28 @@ class Tetrominoes(MultiObjectDataset):
             return torch.ones_like(preprocessed)
         return preprocessed
 
+class vmds(MultiObjectDataset):
+    def _load_video_data(self) -> Tuple[DataDict]:
+        data = super()._load_video_data()
 
-def make_dataset(
-    dataset_config: DictConfig, starting_index: int, dataset_size: int, kwargs=None
+        
+        return data
+
+
+class vor(MultiObjectDataset):
+    def _load_video_data(self) -> Tuple[DataDict]:
+        data = super()._load_video_data()
+        
+        return data
+
+
+
+
+
+
+
+def make_dataset( 
+    dataset_config: DictConfig, starting_index: int, dataset_size: int, dataset_partition: str, kwargs=None    #dataset_partition: either train, val, test
 ) -> MultiObjectDataset:
     logging.info(
         f"Instantiating dataset with starting_index={starting_index} and size={dataset_size}."
@@ -516,6 +557,7 @@ def make_dataset(
         dataset_config,
         starting_index=starting_index,
         dataset_size=dataset_size,
+        video_feature=dataset_partition,
         **kwargs,
     )
 
@@ -543,11 +585,17 @@ def make_dataloaders(
     Returns:
         List of dataloaders
     """
+    if dataset_config['name'] == 'vmds' or dataset_config['name'] == 'vor':
+        video_dataset_partition = ['train', 'val']
+    else:
+        video_dataset_partition = ['None', 'None', 'None']
     if data_sizes is None:
         return []
     dataloaders = []
     start = starting_index
+    t = 0
     for size in data_sizes:
+
         dataloaders.append(
             make_dataloader(
                 dataset_config,
@@ -558,9 +606,11 @@ def make_dataloaders(
                 drop_last=True,
                 pin_memory=pin_memory,
                 num_workers=num_workers,
+                dataset_partition=video_dataset_partition[t],   #useful just for video datasets
             )
         )
         start += size
+        t = t + 1
     return dataloaders
 
 
@@ -568,13 +618,14 @@ def make_dataloader(
     dataset_config: DictConfig,
     batch_size: int,
     dataset_size: int,
+    dataset_partition: str,
     starting_index: int = 0,
     shuffle=False,
     drop_last=False,
     pin_memory: bool = True,
     num_workers: int = 0,
 ) -> DataLoader:
-    dataset = make_dataset(dataset_config, starting_index, dataset_size)
+    dataset = make_dataset(dataset_config, starting_index, dataset_size, dataset_partition)
     return DataLoader(
         dataset,
         batch_size,
@@ -611,6 +662,13 @@ def _load_data_hdf5(
     # From `h5py.File` to a dict of `h5py.Datasets`.
     dataset = {k: dataset[k] for k in dataset}
     return dataset, metadata
+
+def _load_video_data_hdf5(data_path: Path) -> Tuple[Dict[str, h5py.Dataset]]:
+   
+    dataset = h5py.File(data_path, "r")
+    # From `h5py.File` to a dict of `h5py.Datasets`.
+    dataset = {k: dataset[k] for k in dataset}
+    return dataset
 
 
 def _minimal_load_range(

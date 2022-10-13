@@ -9,6 +9,7 @@ dataset:
   name: clevr
   input_channels: 3
   dataset_path: clevr_10-full.hdf5
+  video_dataset: false
   downstream_features:
     - x
     - y

@@ -18,8 +18,8 @@ trainer:
     lr: 0.0007
 
 model:
-  _target_: models.vmnn.model.vmnnAE
-  name: vmnn
+  _target_: models.vmnn_video.model.vmnnAE
+  name: vmnn_video
   num_slots: ${dataset.max_num_objects}
   latent_size: 64
   beta: 0.5
@@ -46,8 +46,16 @@ model:
     latent_layers: 1
     hidden_size: 64
     num_slots: ${dataset.max_num_objects}
+    dynamics: 'SCOFF'
+    h_key_size: 32
+    z_key_size: 32 
+    num_grus: 1
+    num_dynamics_heads: 1
+    loss : 'beta_vae'
+
   attention_iters: 3
   mlp_size: 128
   eps: 1e-8
   h_broadcast: ${dataset.height}
   w_broadcast: ${dataset.width}
+  

@@ -9,6 +9,7 @@ dataset:
   max_num_objects: 4
   input_channels: 3
   dataset_path: tetrominoes-full.hdf5
+  video_dataset: false
   downstream_features:
     - x
     - y

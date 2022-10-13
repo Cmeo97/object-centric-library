@@ -8,6 +8,7 @@ from torch import Tensor, nn
 from models.base_model import BaseModel
 from models.nn_utils import get_conv_output_shape, make_sequential_from_config
 from models.shared.nn import PositionalEmbedding
+from models.vmnn.group_operations import AttentionalDynamicsUpdate, SCOFFDynamics
 from .group_operations import PerceiverSW, CommAttention
 
 import torch.nn.functional as F
@@ -41,6 +42,14 @@ class vmnnConfig(Dict):
     z_size: int
     D_num_heads: int
     n_SK_slots: int
+    hidden_size: int
+    num_slots: int
+    dynamics: str
+    h_key_size: int
+    z_key_size: int
+    num_grus: int
+    num_dynamics_heads: int
+    loss : str
 
 
 class Encoder(nn.Module):
@@ -168,14 +177,17 @@ class SlotAttentionModule(nn.Module):
         self.norm_pre_ff = nn.LayerNorm(dim, eps=0.001)
         self.dim = dim
 
-    def forward(self, inputs: Tensor, num_slots: Optional[int] = None) -> Tensor:
+    def forward(self, inputs: Tensor, prev_slots: Tensor, slots_initialization: bool = False, num_slots: Optional[int] = None) -> Tensor:
         b, n, _ = inputs.shape
         if num_slots is None:
             num_slots = self.num_slots
 
-        mu = self.slots_mu.expand(b, num_slots, -1)
-        sigma = self.slots_log_sigma.expand(b, num_slots, -1).exp()
-        slots = torch.normal(mu, sigma)
+        if slots_initialization:
+            mu = self.slots_mu.expand(b, num_slots, -1)
+            sigma = self.slots_log_sigma.expand(b, num_slots, -1).exp()
+            slots = torch.normal(mu, sigma)
+        else:
+            slots = prev_slots
 
         inputs = self.norm_input(inputs)
         k, v = self.to_k(inputs), self.to_v(inputs)
@@ -216,7 +228,13 @@ class vmnn_cell(nn.Module):
                 num_comm_heads = 1,  
                 latent_layers= 2,
                 hidden_size= 100, 
-                num_slots = 6
+                num_slots = 6,
+                dynamics = "AD",
+                h_key_size = 32, 
+                z_key_size = 32, 
+                num_grus = 2, 
+                num_dynamics_heads = 1,
+                loss = 'none' # used to hardcode loss function in vmnnAE
     ):
         super().__init__()
            
@@ -229,6 +247,13 @@ class vmnn_cell(nn.Module):
         self.latent_layers = latent_layers
         self.hidden_size = hidden_size 
         self.num_slots = num_slots
+        # Dynamics parameters
+        self.dynamics = dynamics
+        self.h_key_size = h_key_size
+        self.z_key_size = z_key_size
+        self.num_grus = num_grus
+        self.num_dynamics_heads = num_dynamics_heads
+        
 
          ## MLPs Initialization   
         if self.latent_layers > 0:
@@ -237,10 +262,15 @@ class vmnn_cell(nn.Module):
         if self.communication == 'CA':
             self.communication_attention = CommAttention(self.hidden_size, self.comm_key_size, self.num_comm_heads)
         elif self.communication == 'SW':
-            self.communication_attention = PerceiverSW(self.n_SK_slots,self.hidden_size, self.num_comm_heads, self.num_slots)
+            self.communication_attention = PerceiverSW(self.n_SK_slots, self.hidden_size, self.num_comm_heads, self.num_slots)
+
+        if self.dynamics == "AD":
+            self.dynamics = AttentionalDynamicsUpdate(self.h_key_size, self.z_key_size, self.hidden_size, self.latent_size, self.num_dynamics_heads)
+        elif self.dynamics == "SCOFF":
+            self.dynamics = SCOFFDynamics(self.latent_size, self.hidden_size, self.num_slots, self.num_grus, self.num_dynamics_heads)
      
 
-    def forward(self, slots):
+    def forward(self, slots, h):
         """
         Input : z (batch_size, num_z_inputs, z_size)
                 hs (batch_size, num_units, hidden_size)
@@ -258,6 +288,9 @@ class vmnn_cell(nn.Module):
             z = slots
             mu = None
             log_var = None
+
+        #Dynamics 
+        z = self.dynamics(h, z)
 
         # Communication
         if self.communication == 'CA' or self.communication == 'SW':
@@ -277,12 +310,31 @@ class beta_VAE_loss(nn.Module):
     def forward(self, recon_x, x, mu, log_var):
     
         recon_loss = F.mse_loss(recon_x, x, reduction='none').view(x.shape[0], -1).mean(dim=-1)
-        KLD = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).view(x.shape[0], -1).sum(dim=-1)
-        #C_factor = min(self.epoch / (self.warmup_epoch + 1), 1)
-        #KLD_diff = torch.abs(KLD - self.C * C_factor)
-        return (recon_loss + self.beta/(x.shape[2]*x.shape[3]) * KLD).mean(dim=0), recon_loss.mean(dim=0), KLD.mean(dim=0)
-       
+        KLD = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).mean(dim=2).sum(dim=1)
+     
+        return recon_loss.mean(dim=0) + self.beta/(x.shape[2]*x.shape[3]) * KLD.mean(dim=0), recon_loss.mean(dim=0), KLD.mean(dim=0)
         
+class disentangled_beta_VAE_loss(nn.Module):
+    """nn.Module for disentangled beta_VAE_loss
+
+    """
+    epoch : int = 0
+
+    def __init__(self, beta):
+        super().__init__()
+        self.warmup_epoch = 25
+        self.C = 2.5
+        self.beta = beta
+
+    def forward(self, recon_x, x, mu, log_var):
+
+        recon_loss = F.mse_loss(recon_x, x, reduction='none').view(x.shape[0], -1).mean(dim=-1)
+   
+        KLD = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).mean(dim=2).sum(dim=1)
+        C_factor = min(self.epoch / (self.warmup_epoch + 1), 1)
+        KLD_diff = torch.abs(KLD - self.C * C_factor)
+
+        return recon_loss.mean(dim=0) + self.beta/(x.shape[2]*x.shape[3]) * KLD_diff.mean(dim=0), recon_loss.mean(dim=0), KLD.mean(dim=0)
 
 
 @dataclass(eq=False, repr=False)
@@ -298,7 +350,6 @@ class vmnnAE(BaseModel):
     attention_iters: int = 3
     w_broadcast: Union[int, Literal["dataset"]] = "dataset"
     h_broadcast: Union[int, Literal["dataset"]] = "dataset"
-
     encoder: Encoder = field(init=False)
     decoder: Decoder = field(init=False)
 
@@ -325,7 +376,10 @@ class vmnnAE(BaseModel):
         
         self.vmnn = vmnn_cell(**self.vmnn_params)   
         if self.vmnn.latent_layers > 0:
-            self.loss_fn = beta_VAE_loss(self.beta)
+            if self.vmnn_params.loss == 'beta_VAE':
+                self.loss_fn = beta_VAE_loss(self.beta)
+            else: 
+                self.loss_fn = disentangled_beta_VAE_loss(self.beta)
         else:
             self.loss_fn = nn.MSELoss()
 
@@ -335,6 +389,8 @@ class vmnnAE(BaseModel):
             input_channels=self.latent_size,
         )
         self.decoder = Decoder(**self.decoder_params)
+        self.prev_slots = None
+        self.prev_h = torch.randn((64, self.num_slots, self.vmnn_params.hidden_size), requires_grad=False)
 
     @property
     def slot_size(self) -> int:
@@ -344,13 +400,21 @@ class vmnnAE(BaseModel):
         slot = slot.unsqueeze(-1).unsqueeze(-1)
         return slot.repeat(1, 1, self.w_broadcast, self.h_broadcast)
 
-    def forward(self, x: Tensor) -> dict:
+    def forward(self, input: Tensor, slots_initialization: bool = False) -> dict:
+        
+        if input.dim() > 4:
+            x = input[:, 0]
+            target = input[: , 1]
+        else:
+            x = input
         with torch.no_grad():
             x = x * 2.0 - 1.0
         encoded = self.encoder(x)
         encoded = encoded.permute(0, 2, 1)
-        z = self.slot_attention(encoded)
-        h, mu, log_var = self.vmnn(z)
+        z = self.slot_attention(encoded, self.prev_slots, slots_initialization)
+        self.prev_slots = z
+        h, mu, log_var = self.vmnn(z, self.prev_h.to(z.device))
+        self.h_prev = h
         bs = z.size(0)
         h = h.flatten(0, 1)
         h = self.spatial_broadcast(h)
@@ -361,9 +425,9 @@ class vmnnAE(BaseModel):
         recon_slots_masked = img_slots * masks
         recon_img = recon_slots_masked.sum(dim=1)
         if self.vmnn.latent_layers > 0:
-            loss, _, kl_z = self.loss_fn(recon_img, x, mu, log_var)
+            loss, _, kl_z = self.loss_fn(recon_img, target, mu, log_var)
         else:
-            loss = self.loss_fn(recon_img, x)
+            loss = self.loss_fn(recon_img, target)
             kl_z = 0
 
         with torch.no_grad():

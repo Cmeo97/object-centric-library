@@ -166,7 +166,7 @@ class SCOFFDynamics(nn.Module):
         """
 
         #self.blockify_params()
-        bs, num_hidden = h.shape[0], h.shape[1]                                                                  # h: previous hidden state  
+        bs = h.shape[0]                                                                      # h: previous hidden state  
         # from current hidden to q, shape: [N, num_hidden, key_size]
         query = self.query_proj(h)  # from current hidden to q, shape: [N, num_hidden, key_size]
         h = h.reshape(-1, self.hidden_size)   # h.shape: (N*num_hidden, hidden_size)
@@ -179,7 +179,7 @@ class SCOFFDynamics(nn.Module):
                 z.reshape(-1, 1, self.input_size),
                 h.reshape(1, -1, self.hidden_size)
                 )    # Shape: [N*num_hidden, hidden_size]
-            hnext_stack.append(hnext_l.reshape(-1, num_hidden, 1, self.hidden_size))
+            hnext_stack.append(hnext_l.reshape(-1, self.num_hidden, 1, self.hidden_size))
           
         hnext = torch.cat(hnext_stack, 2) # Shape: [N, num_hidden, N_grus, hidden_size]
  

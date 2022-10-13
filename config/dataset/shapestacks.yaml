@@ -9,6 +9,7 @@ dataset:
   max_num_objects: 7
   dataset_path: shapestacks-full.hdf5
   name: shapestacks
+  video_dataset: false
   downstream_features:
     - color
     - shape

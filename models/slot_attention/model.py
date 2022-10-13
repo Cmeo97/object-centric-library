@@ -261,7 +261,7 @@ class SlotAttentionAE(BaseModel):
             recon_slots_output = (img_slots + 1.0) / 2.0
         return {
             "loss": loss,  # scalar
-            "Dm": 0, 
+            "kl_latent": 0, 
             "mask": masks,  # (B, slots, 1, H, W)
             "slot": recon_slots_output,  # (B, slots, 3, H, W)
             "representation": z,  # (B, slots, latent dim)
