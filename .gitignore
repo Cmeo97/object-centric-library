@@ -6,7 +6,7 @@ analysis/plots*/
 plots/
 cluster/submission_files/
 logs/
-
+nohup.out
 ### https://raw.github.com/github/gitignore/f908e51bcf38ae5ede449c55189a7b25d8c507cc/Python.gitignore
 
 # Byte-compiled / optimized / DLL files

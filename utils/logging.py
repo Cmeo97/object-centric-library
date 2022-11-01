@@ -91,7 +91,7 @@ class TBLogger:
             self.add_images("segmentation: pred", pred_mask_segmap, step)
 
         elif len(out["mask"].shape) == 6: 
-            for i in range(x.shape[1]):
+            for i in range(x.shape[1]-1):
                 x_recon = _flatten_slots(torch.stack([x[:, i], recon_img[:, i]], dim=1), nrow=sqrt_nrow)
                 self.add_image("input-reconstruction-f:"+str(i), x_recon.clamp(0.0, 1.0), step)
 

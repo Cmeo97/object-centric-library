@@ -70,11 +70,12 @@ class BaseTrainer:
         Called at the beginning of `_setup_training(). Override to customize.
         """
 
-        @self.trainer.on(Events.ITERATION_COMPLETED)
+        @self.trainer.on(Events.EPOCH_COMPLETED(every=5))
         def lr_scheduler_step(engine):
             logging.debug(f"Stepping {len(self.lr_schedulers)} schedulers")
             for scheduler in self.lr_schedulers:
                 scheduler.step()
+                print('scheduler step')
 
     @property
     def scalar_params(self) -> List[str]:

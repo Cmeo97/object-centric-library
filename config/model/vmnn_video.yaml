@@ -6,12 +6,12 @@ defaults:
 batch_size: 64
 trainer:
   _target_: models.vmnn.trainer.VMNNTrainer
-  steps: 500_000
+  steps: 400 #500_000
   use_warmup_lr: true
-  warmup_steps: 10_000
+  warmup_steps: 10 #10_000
   use_exp_decay: true
   exp_decay_rate: 0.5
-  exp_decay_steps: 100_000
+  exp_decay_steps: 100 #100_000
 
   optimizer_config:
     alg: Adam
@@ -22,7 +22,7 @@ model:
   name: vmnn_video
   num_slots: ${dataset.max_num_objects}
   latent_size: 64
-  beta: 0.5
+  beta: 4
   encoder_params:
     channels: [32, 32, 32, 32]
     kernels: [5, 5, 5, 5]
@@ -41,17 +41,17 @@ model:
     latent_size: 64
     comm_key_size: 32
     comm_value_size: 32
-    num_comm_heads: 2
-    n_SK_slots: 4
+    num_comm_heads: 1
+    n_SK_slots: 2
     latent_layers: 1
     hidden_size: 64
     num_slots: ${dataset.max_num_objects}
-    dynamics: 'SCOFF'
-    h_key_size: 32
-    z_key_size: 32 
+    dynamics: 'AD'
+    h_key_size: 64
+    z_key_size: 64
     num_grus: 1
     num_dynamics_heads: 1
-    loss : 'beta_vae'
+    loss : 'disentangled_beta_vae'
 
   attention_iters: 3
   mlp_size: 128

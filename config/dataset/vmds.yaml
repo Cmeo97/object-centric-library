@@ -7,7 +7,7 @@ dataset:
   height: 64
   input_channels: 3
   num_background_objects: 1
-  max_num_objects: 6
+  max_num_objects: 3
   dataset_path: vmds.hdf5
   video_dataset: true
   downstream_features: []

@@ -46,11 +46,16 @@ def run_eval(
 
 
 def save_visualization(batch, output, results_path, max_n_slots):
-    slots = output["slot"]  # (B, num slots, 3, H, W)
-    masks = output["mask"]  # (B, num slots, 1, H, W)
-    true_masks = batch["mask"]  # (B, num objects, 1, H, W)
-    input_ = batch["image"]  # (B, 3, H, W)
-    recon = make_recon_img(slots, masks).clamp(0.0, 1.0)  # (B, 3, H, W)
+    if 'mask' in batch.keys():
+        slots = output["slot"]  # (B, num slots, 3, H, W), (B, frames, num_slots, 3, H, W) if video data
+        masks = output["mask"]  # (B, num slots, 1, H, W), (B, frames, num_slots, 1, H, W) if video data
+        true_masks = batch["mask"]  # (B, num objects, 1, H, W)
+        input_ = batch["image"]  # (B, 3, H, W), (B, frames, 1, H, W) if video data
+    else: 
+        slots = output["slot"][1]
+        masks = output["mask"][1]
+        input_ = batch["image"][1]  
+    recon = make_recon_img(slots, masks).clamp(0.0, 1.0)  # (B, 3, H, W), (B, frames, 1, H, W) if video data
 
     plt.rcParams["axes.edgecolor"] = "0.15"
     plt.rcParams["axes.linewidth"] = 1.25
@@ -60,7 +65,10 @@ def save_visualization(batch, output, results_path, max_n_slots):
     plt.rcParams["ytick.labelleft"] = "False"
 
     # Two columns with input and reconstruction.
-    images = list(zip(input_, recon))
+    if 'mask' in batch.keys():
+        images = list(zip(input_, recon))
+    else:
+        images = list(zip(input_, recon))
     save_image_grid(images, results_path / "input_recon.png")
 
     # If only one slot (e.g. non-object-centric models) skip.
@@ -70,13 +78,19 @@ def save_visualization(batch, output, results_path, max_n_slots):
 
     # Reorder the predicted masks to maximally match the true masks, and then place
     # the following predicted masks from largest to smallest.
-    reordered_masks = reorder_pred_masks(masks, true_masks)
+    if 'mask' in batch.keys():
+        reordered_masks = reorder_pred_masks(masks, true_masks)
 
     # Two columns with true and predicted segmentation masks.
-    pred_mask_segmentation = masks_to_segmentation(reordered_masks)
-    true_mask_segmentation = masks_to_segmentation(true_masks)
+    if 'mask' in batch.keys():
+        pred_mask_segmentation = masks_to_segmentation(reordered_masks)
+        true_mask_segmentation = masks_to_segmentation(true_masks)
+        images = torch.stack([true_mask_segmentation, pred_mask_segmentation], dim=1)
+    else:
+        pred_mask_segmentation = masks_to_segmentation(masks)
+        images = pred_mask_segmentation
     # These masks are (B, 3, H, W), stack them to (B, 2, 3, H, W).
-    images = torch.stack([true_mask_segmentation, pred_mask_segmentation], dim=1)
+    
     save_image_grid(
         images,
         results_path / "true_pred_mask.png",

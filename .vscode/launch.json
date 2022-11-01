@@ -10,8 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["model=vmnn_video",
-                     "dataset=vmds"
+            "args": ["checkpoint_path=outputs/runs/vmnn_video-vor-2022-10-18_10-13-51"
                      ],
             "justMyCode": true
         }

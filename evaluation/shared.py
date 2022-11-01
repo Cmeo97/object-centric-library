@@ -203,6 +203,7 @@ def eval_shared(config, run_eval, eval_name, get_dataset_size, get_batch_size):
                 "downstream_features": dataset_config.dataset.downstream_features,
                 "output_features": config.output_features,
             },
+            dataset_partition='val',
         )
         dataloader = DataLoader(
             dataset, batch_size=get_batch_size(config), shuffle=False, drop_last=False

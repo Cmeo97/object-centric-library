@@ -23,7 +23,7 @@ max_n_slots: 10   # maximum number of slots for visualization (using top k masks
 
 output_features: all   # 'all' or list of strings
 
-overwrite: false
+overwrite: true
 
 debug: false
 

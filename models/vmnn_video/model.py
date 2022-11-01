@@ -413,7 +413,7 @@ class vmnnAE(BaseModel):
         encoded = encoded.permute(0, 2, 1)
         z = self.slot_attention(encoded, self.prev_slots, slots_initialization)
         self.prev_slots = z
-        h, mu, log_var = self.vmnn(z, self.prev_h.to(z.device))
+        h, mu, log_var = self.vmnn(z, self.prev_h[:z.shape[0]].to(z.device))
         self.h_prev = h
         bs = z.size(0)
         h = h.flatten(0, 1)
